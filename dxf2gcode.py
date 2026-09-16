@@ -1,26 +1,36 @@
 # -*- coding: utf-8 -*-
 """
-DXF 转 CNC G 代码工具
-====================
-功能：把 AutoCAD 画好的 DXF 名字线条（多段线/直线/圆弧/圆）转换成
+CAD 矢量图转 CNC G 代码工具
+==========================
+功能：把 AutoCAD 画好的 DXF / DWF / DWFx 名字线条
+      （多段线/直线/圆弧/圆/样条曲线）转换成
       仅使用 G00、G01、G02、G03 四种指令的 G 代码。
-依赖：ezdxf（读写 DXF）
-运行环境：Windows / Python 3.8+
+依赖：ezdxf（DXF）、ezdwf（DWF/DWFx，可选）
+运行环境：Windows / Python 3.10+
 使用示例：
-    python dxf2gcode.py -i name.dxf -o name.nc -s 5 -d -0.5 -f 100
+    python dxf2gcode.py -i name.dxf  -o name.txt
+    python dxf2gcode.py -i name.dwf  -o name.txt
 """
 
 import argparse                # 命令行参数解析
 import math                    # 三角函数、反正切等几何计算
+import os                      # 扩展名判断
 import re                      # 正则表达式，用于坐标偏移
 import sys                     # 退出码与错误输出
-from typing import List, Tuple # 类型标注，方便阅读
+from typing import List, Tuple, Dict, Any  # 类型标注，方便阅读
 
 try:
     import ezdxf               # DXF 读写库
 except ImportError:
     print("【错误】缺少依赖库 ezdxf，请先执行：pip install ezdxf")
     sys.exit(1)
+
+# ezdwf 是可选依赖，DWF/DWFx 文件才需要
+try:
+    import ezdwf               # DWF/DWFx 读写库
+    HAS_EZDWF = True
+except ImportError:
+    HAS_EZDWF = False
 
 
 # ======================================================================
@@ -49,11 +59,20 @@ def _entity_bbox(entity) -> Tuple[float, float, float, float]:
                 pts.append((float(p[0]), float(p[1])))
 
         elif dxftype == "POLYLINE":
-            # 老式 POLYLINE：顶点通过 vertices 遍历，坐标在 location 属性里
-            for v in entity.vertices:
-                loc = v.dxfattribs().get("location")
-                if loc is not None:
-                    pts.append((float(loc.x), float(loc.y)))
+            # POLYLINE 可能是 ezdxf 老式（有 vertices）或 ezdwf 风格（有 get_points）
+            if hasattr(entity, "vertices"):
+                # ezdxf 老式 POLYLINE
+                for v in entity.vertices:
+                    loc = v.dxfattribs().get("location")
+                    if loc is not None:
+                        pts.append((float(loc.x), float(loc.y)))
+            elif hasattr(entity, "get_points"):
+                # ezdwf 适配后的 POLYLINE
+                try:
+                    for p in entity.get_points("xy"):
+                        pts.append((float(p[0]), float(p[1])))
+                except Exception:
+                    pass
 
         elif dxftype == "ARC":
             cx = float(entity.dxf.center.x)
@@ -68,6 +87,11 @@ def _entity_bbox(entity) -> Tuple[float, float, float, float]:
             r  = float(entity.dxf.radius)
             pts.append((cx - r, cy - r))
             pts.append((cx + r, cy + r))
+
+        elif dxftype == "SPLINE":
+            # SPLINE 用控制点求包围盒（近似，但够用来算全局范围）
+            for cp in entity.control_points:
+                pts.append((float(cp[0]), float(cp[1])))
     except Exception:
         return (0.0, 0.0, 0.0, 0.0)
 
@@ -77,6 +101,178 @@ def _entity_bbox(entity) -> Tuple[float, float, float, float]:
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
     return (min(xs), max(xs), min(ys), max(ys))
+
+
+# ======================================================================
+# DWF / DWFx 兼容层（适配器模式）
+# ======================================================================
+# ezdwf 实体属性命名和 ezdxf 不一样
+# 这里写适配器类，把 ezdwf 实体包装成"长得像 ezdxf"的样子
+# 这样已有的 handle_line / handle_arc 等函数一行都不用改
+# ======================================================================
+
+class _FakeVec3:
+    """模拟 ezdxf 的 Vec3 对象（有 .x .y .z 属性）"""
+    def __init__(self, x, y, z=0.0):
+        self.x = float(x)
+        self.y = float(y)
+        self.z = float(z)
+
+
+class _FakeDxfAttr:
+    """模拟 ezdxf 的 entity.dxf 属性容器"""
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+class _DwfEntityAdapter:
+    """
+    把 ezdwf 实体包装成"长得像 ezdxf 实体"的样子
+    支持 dxftype() 和 .dxf 属性访问
+    """
+    def __init__(self, dwf_entity):
+        self._e = dwf_entity
+        self._type = dwf_entity.dxftype()
+        self.dxf = self._build_dxf()
+
+    def dxftype(self):
+        return self._type
+
+    def _build_dxf(self):
+        """根据实体类型，构造模拟 ezdxf 的 .dxf 对象"""
+        e = self._e
+        t = self._type
+
+        if t == "LINE":
+            pts = list(e.points)
+            return _FakeDxfAttr(
+                start=_FakeVec3(pts[0].x, pts[0].y, 0.0),
+                end=_FakeVec3(pts[1].x, pts[1].y, 0.0),
+            )
+
+        elif t == "POLYLINE":
+            # ezdwf POLYLINE 没有 bulge，全部 bulge=0
+            pts = list(e.points)
+            xy = [(float(p.x), float(p.y), 0.0) for p in pts]
+            return _FakeDxfAttr(
+                xy=xy,
+                closed=bool(e.closed),
+            )
+
+        elif t == "ARC":
+            center = e.center
+            # x_axis 是半径向量，长度即半径
+            rx = float(e.x_axis.x)
+            ry = float(e.x_axis.y)
+            radius = math.sqrt(rx * rx + ry * ry)
+            return _FakeDxfAttr(
+                center=_FakeVec3(center.x, center.y, 0.0),
+                radius=radius,
+                start_angle=float(e.start_angle_degrees),
+                end_angle=float(e.end_angle_degrees),
+            )
+
+        elif t == "CIRCLE":
+            center = e.center
+            rx = float(e.x_axis.x)
+            ry = float(e.x_axis.y)
+            radius = math.sqrt(rx * rx + ry * ry)
+            return _FakeDxfAttr(
+                center=_FakeVec3(center.x, center.y, 0.0),
+                radius=radius,
+            )
+
+        else:
+            # 其他类型返回空 dxf 属性，会被主循环跳过
+            return _FakeDxfAttr()
+
+
+class _FakeVertex:
+    """模拟 ezdxf VERTEX 对象（有 dxfattribs() 方法返回 location）"""
+    def __init__(self, x, y):
+        self._loc = _FakeVec3(x, y, 0.0)
+    def dxfattribs(self):
+        return {"location": self._loc}
+
+
+class _DwfPolylineAdapter(_DwfEntityAdapter):
+    """
+    POLYLINE 适配器：需要同时兼容 handle_lwpolyline 和 handle_polyline
+    - handle_lwpolyline 调用 entity.get_points("xy")
+    - handle_polyline 访问 entity.dxf.flags 和 entity.vertices
+    """
+    def __init__(self, dwf_entity):
+        super().__init__(dwf_entity)
+        # 补全 POLYLINE 需要的 ezdxf 属性
+        closed = bool(dwf_entity.closed)
+        self.dxf.flags = 1 if closed else 0
+        # 模拟 vertices 列表
+        pts = list(dwf_entity.points)
+        self.vertices = [_FakeVertex(float(p.x), float(p.y)) for p in pts]
+
+    def get_points(self, fmt: str = "xy"):
+        pts = list(self._e.points)
+        if fmt == "xy":
+            return [(float(p.x), float(p.y)) for p in pts]
+        elif fmt == "xyseb":
+            # x, y, start_width, end_width, bulge
+            return [(float(p.x), float(p.y), 0.0, 0.0, 0.0) for p in pts]
+        return [(float(p.x), float(p.y)) for p in pts]
+
+    @property
+    def closed(self):
+        return bool(self._e.closed)
+
+
+def _dwf_adapt_entity(dwf_entity) -> _DwfEntityAdapter:
+    """把一个 ezdwf 实体包装成 ezdxf 风格的适配器"""
+    t = dwf_entity.dxftype()
+    if t == "POLYLINE":
+        return _DwfPolylineAdapter(dwf_entity)
+    return _DwfEntityAdapter(dwf_entity)
+
+
+def _load_any_file(input_path: str) -> Tuple[list, str]:
+    """
+    统一文件加载入口，根据扩展名自动选 ezdxf 或 ezdwf
+    返回 (实体适配器列表, 格式名称)
+    """
+    ext = os.path.splitext(input_path)[1].lower()
+
+    if ext == ".dxf":
+        # ---- DXF 文件，用 ezdxf ----
+        try:
+            doc = ezdxf.readfile(input_path)
+        except Exception as e:
+            raise RuntimeError(f"无法读取 DXF 文件：{e}")
+
+        msp = doc.modelspace()
+        # ezdxf 实体直接返回，不用适配器
+        return list(msp), "DXF"
+
+    elif ext in (".dwf", ".dwfx"):
+        # ---- DWF / DWFx 文件，用 ezdwf ----
+        if not HAS_EZDWF:
+            raise RuntimeError(
+                "需要 ezdwf 库才能读取 DWF/DWFx 文件。\n"
+                "请执行：pip install ezdwf"
+            )
+        try:
+            drawing = ezdwf.readfile(input_path)
+            sheet = drawing.modelspace()
+        except Exception as e:
+            raise RuntimeError(f"无法读取 DWF/DWFx 文件：{e}")
+
+        # 把 ezdwf 实体全部包装成 ezdxf 风格适配器
+        entities = [_dwf_adapt_entity(e) for e in sheet.entities]
+        return entities, ("DWFx" if ext == ".dwfx" else "DWF")
+
+    else:
+        raise RuntimeError(
+            f"不支持的文件扩展名 '{ext}'。\n"
+            "支持：.dxf / .dwf / .dwfx"
+        )
 
 
 def _compute_global_bbox(msp) -> Tuple[float, float, float, float]:
@@ -465,11 +661,69 @@ def handle_polyline(polyline, safe_z: float, cut_depth: float, feed: float) -> L
     gcode.append(f"G00 Z{_fmt(safe_z)}")
     return gcode
 
+
+def handle_spline(spline, safe_z: float, cut_depth: float, feed: float) -> List[str]:
+    """
+    处理 SPLINE（样条曲线）实体
+    ezdxf 里 SPLINE 没有 fit_points，只有 control_points + knots
+    用 BSpline.approximate() 离散化成折线，全部输出 G01
+    """
+    try:
+        from ezdxf.math import BSpline
+
+        # 提取控制点和 knots
+        cp = list(spline.control_points)
+        knots = list(spline.knots)
+        degree = int(spline.dxf.degree)
+
+        if len(cp) < 2:
+            return []
+
+        # DXF 里 knots 可能多一个（闭样条），去掉末尾重复的
+        # 正常数量 = len(cp) + degree + 1
+        expected_len = len(cp) + degree + 1
+        if len(knots) > expected_len:
+            knots = knots[:expected_len]
+
+        # 用 BSpline 重建并离散化
+        bs = BSpline(cp, order=degree + 1, knots=knots)
+        # 按曲线长度自适应：每 2mm 一个采样点，最少 10 点，最多 200 点
+        approx = list(bs.approximate(segments=30))
+        pts = [(float(p[0]), float(p[1])) for p in approx]
+
+        if len(pts) < 2:
+            return []
+
+        # 检查闭合（flags & 1 = 闭合样条）
+        is_closed = bool(spline.dxf.flags & 1)
+
+    except ImportError:
+        print("【警告】ezdxf.math 里找不到 BSpline，跳过 SPLINE")
+        return []
+    except Exception as e:
+        print(f"【警告】解析 SPLINE 失败：{e}")
+        return []
+
+    gcode: List[str] = []
+    seg_count = len(pts) - 1
+    if is_closed:
+        seg_count += 1
+
+    gcode.extend(_segment_header(pts[0][0], pts[0][1], safe_z, cut_depth, feed))
+
+    for i in range(seg_count):
+        p_next = pts[(i + 1) % len(pts)]
+        gcode.append(_emit_line_segment(p_next[0], p_next[1], feed))
+
+    gcode.append(f"G00 Z{_fmt(safe_z)}")
+    return gcode
+
+
 def dxf_to_gcode(input_path: str, output_path: str,
                  safe_z: float, cut_depth: float, feed: float,
                  auto_offset: bool = True, origin: str = "br") -> None:
     """
-    读 DXF → 转 G 代码 → 写入 .nc 文件
+    读 CAD 文件（DXF / DWF / DWFx）→ 转 G 代码 → 写入 .txt 文件
 
     参数 auto_offset：是否把图形平移到指定原点。
     参数 origin：加工原点位置，可选值：
@@ -478,18 +732,18 @@ def dxf_to_gcode(input_path: str, output_path: str,
         "tl" = 左上角
         "tr" = 右上角
     """
-    # ---------- 1. 读取 DXF ----------
+    # ---------- 1. 统一加载文件（根据扩展名自动选 ezdxf / ezdwf） ----------
     try:
-        doc = ezdxf.readfile(input_path)
-    except Exception as e:
-        print(f"【错误】无法读取 DXF 文件：{e}")
+        entities, fmt_name = _load_any_file(input_path)
+    except RuntimeError as e:
+        print(f"【错误】{e}")
         sys.exit(1)
 
-    msp = doc.modelspace()
+    print(f"【文件格式】{fmt_name}")
     all_lines: List[str] = []
 
     # ---------- 2. 先算整体包围盒，用于识别外框 ----------
-    global_bbox = _compute_global_bbox(msp)
+    global_bbox = _compute_global_bbox(entities)
     gx_min, gx_max, gy_min, gy_max = global_bbox
     width = gx_max - gx_min
     height = gy_max - gy_min
@@ -535,8 +789,8 @@ def dxf_to_gcode(input_path: str, output_path: str,
     # ---------- 4. 按实体顺序依次处理 ----------
     entity_count = 0
     skip_frame_count = 0
-    supported_types = ("LINE", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE")
-    for entity in msp:
+    supported_types = ("LINE", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE", "SPLINE")
+    for entity in entities:
         dxftype = entity.dxftype()
 
         # 跳过边框（包围盒恰好等于整个图形包围盒的实体 = 外框）
@@ -554,6 +808,8 @@ def dxf_to_gcode(input_path: str, output_path: str,
             seg = handle_lwpolyline(entity, safe_z, cut_depth, feed)
         elif dxftype == "POLYLINE":
             seg = handle_polyline(entity, safe_z, cut_depth, feed)
+        elif dxftype == "SPLINE":
+            seg = handle_spline(entity, safe_z, cut_depth, feed)
         else:
             # 不认识的图元跳过，不要中断
             print(f"【提示】跳过不支持的图元类型：{dxftype}")
@@ -589,12 +845,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例：
-    python dxf2gcode.py -i name.dxf -o name.nc
-    python dxf2gcode.py -i name.dxf -o name.nc -s 10 -d -1.0 -f 150
+    python dxf2gcode.py -i name.dxf -o name.txt
+    python dxf2gcode.py -i name.dxf -o name.txt -s 10 -d -1.0 -f 150
         """,
     )
     parser.add_argument("-i", "--input",  required=True, help="输入 DXF 文件路径")
-    parser.add_argument("-o", "--output", required=True, help="输出 .nc G 代码文件路径")
+    parser.add_argument("-o", "--output", required=True, help="输出 .txt G 代码文件路径")
     parser.add_argument("-s", "--safe-z",      type=float, default=15.0,  help="安全高度 Z（抬刀高度，默认 15.0，与程序头一致）")
     parser.add_argument("-d", "--cut-depth",   type=float, default=-0.2,  help="下刀深度（负值，默认 -0.2）")
     parser.add_argument("-f", "--feed",         type=float, default=200.0, help="进给速度 F（默认 200）")

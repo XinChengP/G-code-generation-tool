@@ -18,7 +18,10 @@ if "%~1"=="" (
     echo ========================================
     echo  G-code Previewer
     echo ========================================
-    echo  Usage: Drag a .nc file onto this .bat
+    echo  Usage: Drag a .txt file onto this .bat
+    echo  Outputs 2 images:
+    echo    * _full.png     - full path with rapid moves
+    echo    * _cutting.png  - cutting paths only
     echo ========================================
     echo.
     pause

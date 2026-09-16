@@ -2,12 +2,12 @@
 """
 G 代码二维预览工具
 =================
-功能：读取 CNC .nc / .tap / .gcode 文件，解析 G00/G01/G02/G03 轨迹，
+功能：读取 CNC .txt / .tap / .gcode 文件，解析 G00/G01/G02/G03 轨迹，
       生成 PNG 图片展示 XY 平面的刀具路径。
 依赖：Pillow（已装），matplotlib 可选（效果更好）
 运行：
-    python preview_gcode.py ../11111.nc
-    python preview_gcode.py ../11111.nc -o preview.png
+    python preview_gcode.py ../11111.txt
+    python preview_gcode.py ../11111.txt -o preview.png
 """
 
 import argparse                # 命令行参数
@@ -166,18 +166,30 @@ def _arc_points(x1, y1, x2, y2, cx, cy, r, is_ccw: bool, steps: int = 96):
 # Pillow 可视化
 # ======================================================================
 
-def render_pillow(path: List[dict], out_path: str) -> None:
+def render_pillow(path: List[dict], out_path: str, cutting_only: bool = False) -> None:
     """
     用 Pillow 画刀具路径并保存为 PNG
+
+    cutting_only=True 时，只画切削轨迹（Z<0 的 G01/G02/G03），
+    不画 G00 快速移动，也不画抬刀空跑。适合只想看雕刻形状的场景。
     """
-    # ---- 1. 收集所有坐标，自适应范围 ----
+    # ---- 1. 根据 cutting_only 过滤轨迹 ----
+    if cutting_only:
+        path_to_draw = [seg for seg in path if seg["is_cutting"]]
+    else:
+        path_to_draw = path
+
+    if not path_to_draw:
+        print(f"【警告】没有 {'切削' if cutting_only else ''}轨迹可画")
+        return
+
+    # ---- 2. 收集坐标，自适应范围 ----
     all_x: List[float] = []
     all_y: List[float] = []
-    for seg in path:
+    for seg in path_to_draw:
         all_x.extend([seg["x1"], seg["x2"]])
         all_y.extend([seg["y1"], seg["y2"]])
         if seg["cx"] is not None:
-            # 圆弧的包围盒
             r = seg["r"]
             all_x.extend([seg["cx"] - r, seg["cx"] + r])
             all_y.extend([seg["cy"] - r, seg["cy"] + r])
@@ -238,14 +250,14 @@ def render_pillow(path: List[dict], out_path: str) -> None:
     draw.line([(padding, o_pix[1]), (W - padding, o_pix[1])], fill=(180, 180, 180), width=1)
 
     # ---- 画每条轨迹 ----
-    for seg in path:
+    for seg in path_to_draw:
         kind = seg["kind"]
         cutting = seg["is_cutting"]
         p1 = to_pixel(seg["x1"], seg["y1"])
         p2 = to_pixel(seg["x2"], seg["y2"])
 
         if kind == "rapid":
-            # G00：灰色实线（快速空跑）
+            # G00：灰色（快速空跑）—— cutting_only 模式下不会进这里，因为已过滤
             draw.line([p1, p2], fill=(170, 170, 170), width=1)
 
         elif kind in ("cw", "ccw"):
@@ -275,27 +287,35 @@ def render_pillow(path: List[dict], out_path: str) -> None:
         font = ImageFont.load_default()
         font_small = font
 
-    # 标题
-    draw.text((padding, 15), f"G 代码预览：{os.path.basename(out_path).replace('.png','')}",
-              fill="black", font=font)
+    # 标题（注明是完整轨迹还是仅切削）
+    mode_label = "【仅切削轨迹】" if cutting_only else "【完整轨迹】"
+    draw.text((padding, 15), f"G 代码预览：{mode_label}", fill="black", font=font)
 
     # 图例
     leg_x = W - padding - 180
     leg_y = 15
-    # 切削（蓝色粗实线）
-    draw.line([(leg_x, leg_y + 8), (leg_x + 30, leg_y + 8)],
-              fill=(26, 95, 180), width=2)
-    draw.text((leg_x + 36, leg_y + 2), "切削 G01/G02/G03", fill="black", font=font_small)
-    # 快速（灰色实线）
-    ry1 = leg_y + 28
-    draw.line([(leg_x, ry1 + 8), (leg_x + 30, ry1 + 8)],
-              fill=(170, 170, 170), width=1)
-    draw.text((leg_x + 36, ry1 + 2), "快速 G00", fill="black", font=font_small)
-    # 抬刀空跑（浅灰色实线）
-    ry2 = leg_y + 52
-    draw.line([(leg_x, ry2 + 8), (leg_x + 30, ry2 + 8)],
-              fill=(200, 200, 200), width=1)
-    draw.text((leg_x + 36, ry2 + 2), "抬刀空跑", fill="black", font=font_small)
+
+    if cutting_only:
+        # 仅切削模式：只显示切削图例
+        draw.line([(leg_x, leg_y + 8), (leg_x + 30, leg_y + 8)],
+                  fill=(26, 95, 180), width=2)
+        draw.text((leg_x + 36, leg_y + 2), "切削轨迹 G01/G02/G03", fill="black", font=font_small)
+    else:
+        # 完整模式：三条图例
+        # 切削（蓝色粗实线）
+        draw.line([(leg_x, leg_y + 8), (leg_x + 30, leg_y + 8)],
+                  fill=(26, 95, 180), width=2)
+        draw.text((leg_x + 36, leg_y + 2), "切削 G01/G02/G03", fill="black", font=font_small)
+        # 快速（灰色实线）
+        ry1 = leg_y + 28
+        draw.line([(leg_x, ry1 + 8), (leg_x + 30, ry1 + 8)],
+                  fill=(170, 170, 170), width=1)
+        draw.text((leg_x + 36, ry1 + 2), "快速 G00", fill="black", font=font_small)
+        # 抬刀空跑（浅灰色实线）
+        ry2 = leg_y + 52
+        draw.line([(leg_x, ry2 + 8), (leg_x + 30, ry2 + 8)],
+                  fill=(200, 200, 200), width=1)
+        draw.text((leg_x + 36, ry2 + 2), "抬刀空跑", fill="black", font=font_small)
 
     # 坐标范围（右下角）
     info = (f"X: {x_min:.2f} ~ {x_max:.2f} mm\n"
@@ -412,16 +432,12 @@ def _draw_dashed(draw, points, fill, width=1, dash=6, gap=4):
 
 def main():
     parser = argparse.ArgumentParser(description="G 代码二维预览工具")
-    parser.add_argument("input", help="输入 G 代码文件（.nc / .tap / .gcode）")
-    parser.add_argument("-o", "--output", help="输出图片路径（默认和输入同目录同名.png）")
+    parser.add_argument("input", help="输入 G 代码文件（.txt / .nc / .tap / .gcode）")
+    parser.add_argument("-o", "--output", help="输出图片路径（默认自动出两张：_full.png 和 _cutting_only.png）")
+    parser.add_argument("--single", action="store_true", help="只出一张图（完整轨迹），默认出两张")
     parser.add_argument("--no-open", action="store_true", help="生成后不自动打开图片")
 
     args = parser.parse_args()
-
-    # 输出路径默认值
-    if args.output is None:
-        base = os.path.splitext(args.input)[0]
-        args.output = base + "_preview.png"
 
     print(f"【读取】{args.input}")
     events = parse_gcode_file(args.input)
@@ -436,17 +452,40 @@ def main():
     kind_count = {"rapid": 0, "line": 0, "cw": 0, "ccw": 0}
     for seg in path:
         kind_count[seg["kind"]] = kind_count.get(seg["kind"], 0) + 1
+    cutting_count = sum(1 for s in path if s["is_cutting"])
     print(f"  G00 快速: {kind_count['rapid']} 段")
     print(f"  G01 直线: {kind_count['line']} 段")
     print(f"  G02 顺圆: {kind_count['cw']}   段")
     print(f"  G03 逆圆: {kind_count['ccw']}   段")
+    print(f"  切削段数: {cutting_count} / {len(path)}")
 
-    render_pillow(path, args.output)
+    base = os.path.splitext(args.input)[0]
+    generated: List[str] = []
 
+    if args.single or args.output is not None:
+        # 单图模式
+        out_path = args.output if args.output else base + "_full.png"
+        print(f"\n【生成】完整轨迹图：{out_path}")
+        render_pillow(path, out_path, cutting_only=False)
+        generated.append(out_path)
+    else:
+        # 双图模式（默认）
+        full_path = base + "_full.png"
+        cutting_path = base + "_cutting.png"
+
+        print(f"\n【生成 1/2】完整轨迹（含抬刀空跑）：{full_path}")
+        render_pillow(path, full_path, cutting_only=False)
+        generated.append(full_path)
+
+        print(f"【生成 2/2】仅切削轨迹：{cutting_path}")
+        render_pillow(path, cutting_path, cutting_only=True)
+        generated.append(cutting_path)
+
+    # 自动打开
     if not args.no_open:
-        # 用系统默认程序打开图片
-        abs_path = os.path.abspath(args.output)
-        webbrowser.open("file:///" + abs_path.replace("\\", "/"))
+        for gp in generated:
+            abs_path = os.path.abspath(gp)
+            webbrowser.open("file:///" + abs_path.replace("\\", "/"))
         print(f"【打开】已用默认程序打开图片")
 
 

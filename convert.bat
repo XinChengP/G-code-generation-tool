@@ -45,10 +45,10 @@ echo Python: %PYTHON%
 echo Input : %DXF_FILE%
 echo.
 
-REM Output: same name .nc
-set "NC_FILE=%~dpn1.nc"
+REM Output: same name .txt
+set "OUT_FILE=%~dpn1.txt"
 
-"%PYTHON%" "%~dp0dxf2gcode.py" -i "%DXF_FILE%" -o "%NC_FILE%"
+"%PYTHON%" "%~dp0dxf2gcode.py" -i "%DXF_FILE%" -o "%OUT_FILE%"
 
 if errorlevel 1 (
     echo.
@@ -59,6 +59,6 @@ if errorlevel 1 (
 
 echo.
 echo ========================================
-echo  Done! Saved to: %NC_FILE%
+echo  Done! Saved to: %OUT_FILE%
 echo ========================================
 pause

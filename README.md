@@ -1,58 +1,98 @@
 # CNC G 代码生成工具
 
-- 本人说：
-
-> 为了逃脱金工实习里哐哐手敲代码整的一个脚本
-
-- ai大人说：
-
-> 把 AutoCAD 画的 DXF 文件（多段线 / 直线 / 圆弧）转换成 CNC 雕刻机能用的 G 代码。
+> 把 AutoCAD 画的 DXF / DWF / DWFx 文件（多段线 / 直线 / 圆弧 / 圆 / 样条曲线）
+> 转换成 CNC 雕刻机能用的 G 代码。
 > 输出严格限定为 `G00 / G01 / G02 / G03` 四种指令，无宏程序、无固定循环。
+
+---
+
+## 📁 项目结构
+
+```
+d:\Desktop\G-code-generation-tool\
+├── README.md                ← 你正在读的文件
+├── convert.bat              ← 一键转换（拖文件上去就转）
+├── preview.bat              ← 一键预览（自动生成两张图）
+├── dxf2gcode.py             ← 核心转换脚本
+│
+├── preview\
+    └── preview_gcode.py     ← G 代码预览脚本（Pillow 画 PNG）
+```
 
 ---
 
 ## ⚡ 快速开始（30 秒）
 
-### 1. 准备 DXF 文件
+### 1. 准备 CAD 文件
 
-- 用 AutoCAD 把 DWG 另存为 **DXF 文件**（建议选 AutoCAD 2013 或更高版本）
-- 确保 DXF 里的线条是：`LWPOLYLINE / POLYLINE / LINE / ARC / CIRCLE` 之一
+支持三种格式（脚本自动识别扩展名）：
+
+| 格式 | 扩展名 | 所需依赖 |
+|------|--------|----------|
+| **DXF** | `.dxf` | ezdxf（必装） |
+| **DWF** | `.dwf` | ezdwf（可选，DWF 才需要） |
+| **DWFx** | `.dwfx` | ezdwf（可选，DWFx 才需要） |
+
+**内容要求：**
+- 线条类型：`LWPOLYLINE / POLYLINE / LINE / ARC / CIRCLE / SPLINE`
 - 坐标原点在图纸**右下角**（X 向左负方向，Y 向上正方向）
-- DXF 里可以画一个最大外框矩形，工具会自动跳过它
+- 可以画一个最大外框矩形，工具会自动跳过它
 
-### 2. 转换
+### 2. 安装依赖（只需执行一次）
 
-**方式 A（最简单）：** 把 DXF 文件拖到 `convert.bat` 上
-
-**方式 B：** 在 PowerShell 里敲：
 ```powershell
-.\convert.bat hello.dxf
+# 必装：ezdxf + Pillow
+"C:\Users\ASUS\AppData\Local\Programs\Python\Python310\python.exe" -m pip install ezdxf pillow
+
+# 可选：如果要读 DWF / DWFx 文件再加这个
+"C:\Users\ASUS\AppData\Local\Programs\Python\Python310\python.exe" -m pip install ezdwf
 ```
 
-**方式 C（直接用 Python）：**
+### 3. 转换
+
+**方式 A（最简单）：** 把文件拖到 `convert.bat` 上
+
+**方式 B（PowerShell 命令行）：**
 ```powershell
-"C:\Users\ASUS\AppData\Local\Programs\Python\Python310\python.exe" dxf2gcode.py -i hello.dxf -o hello.nc
+cd d:\Desktop\G-code-generation-tool
+
+# DXF
+.\convert.bat 01.dxf
+
+# DWF（新增支持！）
+.\convert.bat 02.dwf
 ```
 
-成功后会输出：
-```
-【DXF 原始范围】X: 57.375 ~ 112.375  (55.000 mm)
-               Y: 29.323 ~ 49.323  (20.000 mm)
-【加工原点位置】br（CNC (0,0) = DXF (112.375, 29.323)）
-【平移后 CNC 范围】X: -55.000 ~ 0.000
-                 Y: 0.000 ~ 20.000
-【完成】共处理 60 个图元，跳过边框 4 个
-【输出】G 代码已保存至：hello.nc
-```
-
-### 3. 预览轨迹（可选但建议）
-
-拖 `.nc` 文件到 `preview.bat` 上，或：
+**方式 C（直接调用 Python）：**
 ```powershell
-.\preview.bat hello.nc
+python dxf2gcode.py -i 02.dwf -o 02.txt
 ```
 
-会在同目录生成 `hello_preview.png`，蓝色实线是切削轨迹，灰色是快速移动。
+成功输出示例：
+```
+【文件格式】DWF
+【DXF 原始范围】X: 99.954 ~ 147.325  (47.371 mm)
+               Y: 38.929 ~ 76.076  (37.148 mm)
+【加工原点位置】br（CNC (0,0) = DXF (147.325, 38.929)）
+【平移后 CNC 范围】X: -47.371 ~ 0.000
+                 Y: 0.000 ~ 37.148
+【完成】共处理 23 个图元，跳过边框 1 个
+【输出】G 代码已保存至：02.txt
+```
+
+### 4. 预览轨迹（强烈建议每次转换后都做）
+
+拖 `.txt`（或 `.nc`）文件到 `preview.bat` 上，或：
+```powershell
+.\preview.bat 02.txt
+```
+
+**自动生成两张图：**
+
+| 文件 | 内容 |
+|------|------|
+| `02_full.png` | **完整轨迹**：蓝色切削 + 灰色快速 G00 + 浅灰抬刀空跑 |
+| `02_cutting.png` | **纯切削轨迹**：只有蓝色雕刻形状，一眼看清最终效果 |
 
 ---
 
@@ -60,7 +100,7 @@
 
 ### 程序头（固定）
 ```
-O1099;              ← 程序号
+O1099;              ← 程序号（可自定义（诶嘿））
 M03S3000;           ← 主轴正转 3000 RPM
 G54G90;             ← 工件坐标系 + 绝对坐标
 G00Z15;             ← 快速抬刀到安全高度
@@ -69,19 +109,19 @@ G00X0Y0;            ← 快速回原点
 
 ### 每段轮廓
 ```
-G00 Z15.000         ← 抬刀（模态保持，安全高）
-G00 X-49.364 Y11.195 ← 快速移动到起点上方
-G01 Z-0.200 F200    ← 下刀切入（F 模态保持）
-G01 X-52.812 Y11.195 ← 切削直线
-G01 X-52.812 Y14.644
+G00 Z15.000          ← 抬刀（模态保持，安全高）
+G00 X-33.803 Y17.737 ← 快速移动到起点上方
+G01 Z-0.200 F200     ← 下刀切入（F 模态保持）
+G01 X-22.649 Y17.737 ← 切削直线
+G01 X-22.649 Y8.826
 ...
-G00 Z15.000         ← 抬刀，准备下一段
+G00 Z15.000          ← 抬刀，准备下一段
 ```
 
 ### 程序尾
 ```
-G00 Z15.000         ← 确保在安全高
-M30                 ← 程序结束，回到开头
+G00 Z15.000          ← 确保在安全高
+M30                  ← 程序结束，回到开头
 ```
 
 ### 坐标规则
@@ -112,60 +152,71 @@ M30                 ← 程序结束，回到开头
 
 | 参数 | 全称 | 默认值 | 含义 |
 |------|------|--------|------|
-| `-i` | `--input` | **必填** | 输入 DXF 文件路径 |
-| `-o` | `--output` | **必填** | 输出 .nc 文件路径 |
+| `-i` | `--input` | **必填** | 输入文件路径（.dxf / .dwf / .dwfx） |
+| `-o` | `--output` | **必填** | 输出 G 代码文件路径（建议 .txt） |
 | `-s` | `--safe-z` | `15.0` | 安全高度 Z（抬刀高度，mm） |
 | `-d` | `--cut-depth` | `-0.2` | 下刀深度（负值，mm） |
 | `-f` | `--feed` | `200` | 进给速度 F（mm/min） |
-| `-p` | `--origin` | `br` | 加工原点：`bl`左下 / `br`右下 / `tl`左上 / `tr`右上 |
+| `-p` | `--origin` | `br` | 加工原点位置：`bl`左下 / `br`右下 / `tl`左上 / `tr`右上 |
 
 ### 举例
 
 ```powershell
 # 最简（全部默认参数）
-python dxf2gcode.py -i 11111.dxf -o 11111.nc
+python dxf2gcode.py -i 02.dwf -o 02.txt
 
 # 自定义原点 + 下刀更深 + 更快
-python dxf2gcode.py -i 11111.dxf -o 11111.nc -p bl -d -0.5 -f 300
+python dxf2gcode.py -i 02.dwf -o 02.txt -p bl -d -0.5 -f 300
 
 # 原点在左上 + 安全高 20mm
-python dxf2gcode.py -i 11111.dxf -o 11111.nc -p tl -s 20
+python dxf2gcode.py -i 02.dwf -o 02.txt -p tl -s 20
 ```
 
 ---
 
-## 🛠️ DXF 里的边框怎么处理？
+## 🛠️ 外框怎么处理？
 
-工具会**自动识别并跳过**覆盖整个图形最大范围的外框线（水平覆盖全宽或垂直覆盖全高的 LINE，以及完全等于全局包围盒的闭合多段线）。
+工具会**自动识别并跳过**覆盖整个图形最大范围的外框线：
+- LINE 水平覆盖全宽 **或** 垂直覆盖全高 → 外框边
+- POLYLINE 包围盒恰好等于整体包围盒 → 闭合外框
 
-所以你可以放心在 AutoCAD 里画外框，转换时会自动消失。
+你可以放心在 CAD 里画外框，转换时会自动消失。
 
 ---
 
 ## 🐛 常见问题
 
 ### Q: 提示 "ModuleNotFoundError: No module named 'ezdxf'"
-A: 你电脑上有多个 Python，默认指向的那个没装 ezdxf。用 bat 或显式指定 Python 3.10 路径。
-   也可以手动装：`C:\Users\ASUS\AppData\Local\Programs\Python\Python310\python.exe -m pip install ezdxf pillow`
+A: 默认 Python 路径不对。用 bat 或显式指定 Python 3.10 路径。
+   手动装：`python3.10 -m pip install ezdxf pillow`
+
+### Q: DWF 文件报错 "需要 ezdwf 库"
+A: DWF 格式需要额外装 ezdwf：`python3.10 -m pip install ezdwf`
 
 ### Q: 为什么输出里没有 G02/G03？
-A: 你的 DXF 里没有 ARC 或带 bulge 的多段线。DWG → DXF 转换时曲线被打散成小直线了。
-   解决：用 AutoCAD 直接保存为高版本 DXF（不要用第三方转换器）。
+A: 输入里没有 ARC 或带 bulge 的多段线。DWG 转换时曲线被打散成小直线了。
+   解决：用 AutoCAD 直接保存为高版本 DWF 或 DXF（不要用第三方转换器）。
 
 ### Q: 边框没被跳过？
-A: 检查边框是不是恰好覆盖整个图形的 X 或 Y 范围。如果你的边框有圆角/偏移，当前算法识别不出。
-   临时解决：在 AutoCAD 里把边框改回严格矩形再保存。
+A: 检查边框是不是恰好覆盖整个图形的 X 或 Y 范围。有圆角/偏移则识别不出。
+   临时解决：在 CAD 里把边框改回严格矩形再保存。
 
 ### Q: 加工出来的形状偏小 0.3mm？
-A: 刀直径 0.3mm，走刀中心轨迹自然会偏小。要么加 G41 半径补偿，要么在 DXF 里提前把轮廓向外偏移 0.15mm。
+A: 刀直径 0.3mm，走刀中心轨迹自然会偏小。要么加 G41 半径补偿，
+   要么在 CAD 里提前把轮廓向外偏移 0.15mm。
+
+### Q: 转换的 .txt 拷到机床里能识别吗？
+A: 绝大多数 CNC 控制器（FANUC / 广数 / 华中）**不关心后缀名**，
+   只认文件里的 G 代码内容。如果你的机床要求特定后缀，改回去即可。
 
 ---
 
 ## 🔧 技术栈
 
 - **Python** 3.10（路径：`C:\Users\ASUS\AppData\Local\Programs\Python\Python310\`）
-- **ezdxf** 1.4+ （DXF 解析）
-- **Pillow** （PNG 预览）
+- **ezdxf** 1.4+ （DXF 解析，必装）
+- **ezdwf** 0.0.6+ （DWF / DWFx 解析，可选）
+- **Pillow** （PNG 预览绘图）
 - Windows 10 / 11
 
 ---
