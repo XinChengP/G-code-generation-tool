@@ -1226,7 +1226,8 @@ def dxf_to_gcode(input_path: str, output_path: str,
                  safe_z: float, cut_depth: float, feed: float,
                  auto_offset: bool = True, origin: str = "br",
                  snap_tol: float = 0.0, optimize: bool = True,
-                 font_path: str = _DEFAULT_FONT) -> None:
+                 font_path: str = _DEFAULT_FONT,
+                 prog_num: int = 1099) -> None:
     """
     读 CAD 文件 → 转 G 代码 → 写入 .txt
 
@@ -1350,7 +1351,9 @@ def dxf_to_gcode(input_path: str, output_path: str,
               f"（减少 {saved_pct:.1f}%）")
 
     # ---------- 6. 程序头 ----------
-    all_lines.append("O1099;")
+    # 程序号 = O + 4 位数字（O0001 ~ O9999）
+    # 单文件转换默认 O1099；批量转换由 convert_all.bat 传入 1、2、3… 得到 O0001、O0002…
+    all_lines.append(f"O{prog_num:04d};")
     all_lines.append("M03S3000;")
     all_lines.append("G54G90;")
     all_lines.append("G00Z15;")
@@ -1437,11 +1440,21 @@ def main():
                         help="图纸里的文字用哪个 TTF 字体描成轮廓，默认黑体 "
                              r"(C:\Windows\Fonts\simhei.ttf)；换字体例如 "
                              r"--font C:\Windows\Fonts\simkai.ttf（楷体）")
+    parser.add_argument("-n", "--prog-num", type=int, default=1099,
+                        help="程序号 O 后面的数字，范围 1~9999（默认 1099，即 O1099）。"
+                             "批量转换时由 convert_all.bat 自动传入 1、2、3…，"
+                             "生成 O0001、O0002、O0003…")
 
     args = parser.parse_args()
 
+    # 程序号必须是 4 位数字范围（O0001 ~ O9999），超出范围机床可能不识别
+    if not (1 <= args.prog_num <= 9999):
+        print("【错误】程序号只能是 1 ~ 9999 之间的整数")
+        sys.exit(1)
+
     print(f"输入文件  : {args.input}")
     print(f"输出文件  : {args.output}")
+    print(f"程序号    : O{args.prog_num:04d}")
     print(f"安全高度 Z: {args.safe_z}")
     print(f"下刀深度  : {args.cut_depth}")
     print(f"进给速度 F: {args.feed}")
@@ -1461,6 +1474,7 @@ def main():
         snap_tol=args.snap_tol,
         optimize=not args.no_optimize,
         font_path=args.font,
+        prog_num=args.prog_num,
     )
 
 

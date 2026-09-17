@@ -4,6 +4,7 @@ setlocal enabledelayedexpansion
 REM ====== Batch Converter: process ALL CAD files in input\ ======
 REM Supported: .dxf  .dwf  .dwfx
 REM Each file -> gcode\<name>.txt + preview\<name>_full.png + _cutting.png
+REM Program number auto-increments: O0001, O0002, O0003 ...
 
 set "PYTHON=C:\Users\ASUS\AppData\Local\Programs\Python\Python310\python.exe"
 set "ROOT=%~dp0"
@@ -32,6 +33,7 @@ if not exist "%CORE%\dxf2gcode.py" (
 set "COUNT=0"
 set "OK=0"
 set "FAIL=0"
+set "PROG=0"
 
 echo.
 echo ========================================
@@ -43,21 +45,29 @@ echo.
 for %%F in ("%INPUT%\*.dxf" "%INPUT%\*.dwf" "%INPUT%\*.dwfx") do (
     if exist "%%F" (
         set /a COUNT+=1
+        REM Reserve a program number BEFORE converting. If conversion fails the
+        REM number is given back below, so successful files always end up with
+        REM consecutive numbers: O0001, O0002, O0003 ...
+        set /a PROG+=1
         echo ----------------------------------------
         echo [#!COUNT!] %%~nxF
         echo ----------------------------------------
 
-        "%PYTHON%" "%CORE%\dxf2gcode.py" -i "%%F" -o "%GCODE%\%%~nF.txt"
+        "%PYTHON%" "%CORE%\dxf2gcode.py" -i "%%F" -o "%GCODE%\%%~nF.txt" -n !PROG!
         if errorlevel 1 (
             echo [FAIL] %%~nxF
             set /a FAIL+=1
+            set /a PROG-=1
         ) else (
             echo.
             "%PYTHON%" "%CORE%\preview_gcode.py" "%GCODE%\%%~nF.txt" --img-dir "%IMG%" --no-open
             if errorlevel 1 (
                 echo [WARN] preview failed for %%~nxF
             )
-            echo [OK] %%~nxF -^> gcode\%%~nF.txt
+            REM Pad program number to 4 digits for display: 1 -> 0001, 12 -> 0012
+            set "PNUM=000!PROG!"
+            set "PNUM=!PNUM:~-4!"
+            echo [OK] %%~nxF -^> gcode\%%~nF.txt  [O!PNUM!]
             set /a OK+=1
         )
         echo.
