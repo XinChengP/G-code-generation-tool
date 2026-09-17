@@ -17,10 +17,12 @@ d:\Desktop\1\
 │       └── preview_gcode.py      ← G 代码预览脚本（Pillow 画 PNG）
 │
 ├── 用户入口（拖文件就能跑）───────────
-│   ├── convert.bat               ← 把 DXF / DWF / DWFx 转成 G 代码
-│   └── preview.bat               ← 把 .txt / .nc 画成两张轨迹预览图
+│   ├── convert.bat               ← 单个文件：拖一个 DXF/DWF/DWFx 进去
+│   ├── convert_all.bat           ← 批量：扫描 input\ 下全部文件
+│   └── preview.bat               ← 单独预览已有 .txt / .nc
 │
 ├── 输入输出目录（自动创建）────────────
+│   ├── input\                    ← 批量模式放 CAD 源文件
 │   ├── gcode\                    ← 转换输出（.txt）
 │   └── preview\                  ← 预览图输出（_full.png + _cutting.png）
 │
@@ -58,35 +60,37 @@ d:\Desktop\1\
 
 ### 3. 转换 + 自动预览（一条龙）
 
-**最简单：把文件拖到 `convert.bat` 上**，自动完成：
-1. 转换 DXF/DWF → G 代码 `.txt`（存 `gcode\`）
-2. 自动画两张轨迹预览图（存 `preview\` 并打开）
+**单个文件：** 把文件拖到 `convert.bat` 上 → 自动转换 + 自动预览
 
-也可以命令行：
-```powershell
-cd d:\Desktop\1
+**批量（推荐）：** 把多个 CAD 文件丢进 `input\` 文件夹，然后双击 `convert_all.bat`
 
-.\convert.bat input\01.dxf      # 自动出 gcode\01.txt + preview\ 两张图
-.\convert.bat input\02.dwf
+| 场景 | 操作 |
+|------|------|
+| **单个文件** | 拖 `01.dxf` → `convert.bat` → `gcode\01.txt` + `preview\` 两张图 |
+| **批量多个** | 把 N 个文件丢 `input\` → 双击 `convert_all.bat` → 全部处理完 |
+
+批量输出：
 ```
+========================================
+ 批量转换
+ 扫描 input\ 下所有 DXF / DWF / DWFx
+========================================
 
-成功输出：
-```
-【DXF 原始范围】X: 99.954 ~ 147.325  (47.371 mm)
-               Y: 38.929 ~ 76.076  (37.148 mm)
-【加工原点位置】br（CNC (0,0) = DXF (147.325, 38.929)）
-【平移后 CNC 范围】X: -47.371 ~ 0.000
-                 Y: 0.000 ~ 37.148
-【完成】共处理 23 个图元，跳过边框 1 个
-【输出】G 代码已保存至：gcode\01.txt
 ----------------------------------------
- Auto-preview: drawing trajectory...
+[1] 01.dxf
 ----------------------------------------
-[Render 1/2] Full path      -> preview\01_full.png
-[Render 2/2] Cutting only   -> preview\01_cutting.png
+...转换中...
+[成功] 01.dxf -> gcode\01.txt
 
-Done -> gcode\01.txt
-        preview\
+----------------------------------------
+[2] 02.dwf
+----------------------------------------
+...转换中...
+[成功] 02.dwf -> gcode\02.txt
+
+========================================
+ 完成：2 成功，0 失败，共 2 个
+========================================
 ```
 
 ### 4. 单独预览
@@ -109,7 +113,7 @@ Done -> gcode\01.txt
 
 ### 程序头（固定）
 ```
-O1099;              ← 程序号（可自定义（诶嘿））
+O1099;              ← 程序号
 M03S3000;           ← 主轴正转 3000 RPM
 G54G90;             ← 工件坐标系 + 绝对坐标
 G00Z15;             ← 快速抬刀到安全高度
