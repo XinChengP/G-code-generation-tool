@@ -1,54 +1,60 @@
 @echo off
 setlocal
 
-REM ====== DXF to G-code Converter ======
+REM ====== CAD to G-code Converter ======
+REM Convert DXF / DWF / DWFx to G-code .txt files
+REM Output goes to gcode\ subfolder automatically
 
-REM Force Python 3.10 (has ezdxf installed)
 set "PYTHON=C:\Users\ASUS\AppData\Local\Programs\Python\Python310\python.exe"
+set "ROOT=%~dp0"
+set "CORE=%ROOT%core"
+set "GCODE=%ROOT%gcode"
 
-cd /d "%~dp0"
+if not exist "%GCODE%" mkdir "%GCODE%"
+cd /d "%ROOT%"
 
-REM Check Python exists
 if not exist "%PYTHON%" (
     echo [ERROR] Python not found: %PYTHON%
     pause
     exit /b
 )
+if not exist "%CORE%\dxf2gcode.py" (
+    echo [ERROR] Script missing: core\dxf2gcode.py
+    pause
+    exit /b
+)
 
-REM If no argument, prompt to drag DXF onto this bat
 if "%~1"=="" (
     echo ========================================
-    echo  DXF to G-code Converter
+    echo  CAD to G-code Converter
     echo ========================================
-    echo  Usage: Drag a .dxf file onto this .bat
-    echo  Or   : Put .dxf in this folder, then run:
-    echo         convert.bat filename.dxf
+    echo  Drag your CAD file onto this .bat
+    echo  Output: gcode\<filename>.txt
     echo ========================================
     echo.
     pause
     exit /b
 ) else (
-    set "DXF_FILE=%~1"
+    set "IN_FILE=%~1"
 )
 
-if not exist "%DXF_FILE%" (
-    echo [ERROR] File not found: %DXF_FILE%
+if not exist "%IN_FILE%" (
+    echo [ERROR] File not found: %IN_FILE%
     pause
     exit /b
 )
 
+set "OUT_FILE=%GCODE%\%~n1.txt"
+
 echo.
 echo ========================================
-echo  DXF to G-code Converter
+echo  CAD to G-code Converter
 echo ========================================
-echo Python: %PYTHON%
-echo Input : %DXF_FILE%
+echo Input : %IN_FILE%
+echo Output: gcode\%~n1.txt
 echo.
 
-REM Output: same name .txt
-set "OUT_FILE=%~dpn1.txt"
-
-"%PYTHON%" "%~dp0dxf2gcode.py" -i "%DXF_FILE%" -o "%OUT_FILE%"
+"%PYTHON%" "%CORE%\dxf2gcode.py" -i "%IN_FILE%" -o "%OUT_FILE%"
 
 if errorlevel 1 (
     echo.
@@ -57,8 +63,23 @@ if errorlevel 1 (
     exit /b
 )
 
+REM ---- Auto-preview ----
+set "IMG=%ROOT%preview"
+if not exist "%IMG%" mkdir "%IMG%"
+
+echo.
+echo ----------------------------------------
+echo  Auto-preview: drawing trajectory...
+echo ----------------------------------------
+"%PYTHON%" "%CORE%\preview_gcode.py" "%OUT_FILE%" --img-dir "%IMG%"
+
+if errorlevel 1 (
+    echo [WARN] Preview failed (G-code is still OK)
+)
+
 echo.
 echo ========================================
-echo  Done! Saved to: %OUT_FILE%
+echo  Done -^> gcode\%~n1.txt
+echo          preview\
 echo ========================================
 pause

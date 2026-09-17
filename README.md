@@ -9,14 +9,22 @@
 ## 📁 项目结构
 
 ```
-d:\Desktop\G-code-generation-tool\
-├── README.md                ← 你正在读的文件
-├── convert.bat              ← 一键转换（拖文件上去就转）
-├── preview.bat              ← 一键预览（自动生成两张图）
-├── dxf2gcode.py             ← 核心转换脚本
+d:\Desktop\1\
 │
-├── preview\
-    └── preview_gcode.py     ← G 代码预览脚本（Pillow 画 PNG）
+├── 核心代码 ─────────────────────────
+│   └── core\
+│       ├── dxf2gcode.py          ← 核心转换脚本
+│       └── preview_gcode.py      ← G 代码预览脚本（Pillow 画 PNG）
+│
+├── 用户入口（拖文件就能跑）───────────
+│   ├── convert.bat               ← 把 DXF / DWF / DWFx 转成 G 代码
+│   └── preview.bat               ← 把 .txt / .nc 画成两张轨迹预览图
+│
+├── 输入输出目录（自动创建）────────────
+│   ├── gcode\                    ← 转换输出（.txt）
+│   └── preview\                  ← 预览图输出（_full.png + _cutting.png）
+│
+└── README.md
 ```
 
 ---
@@ -48,51 +56,52 @@ d:\Desktop\G-code-generation-tool\
 "C:\Users\ASUS\AppData\Local\Programs\Python\Python310\python.exe" -m pip install ezdwf
 ```
 
-### 3. 转换
+### 3. 转换 + 自动预览（一条龙）
 
-**方式 A（最简单）：** 把文件拖到 `convert.bat` 上
+**最简单：把文件拖到 `convert.bat` 上**，自动完成：
+1. 转换 DXF/DWF → G 代码 `.txt`（存 `gcode\`）
+2. 自动画两张轨迹预览图（存 `preview\` 并打开）
 
-**方式 B（PowerShell 命令行）：**
+也可以命令行：
 ```powershell
-cd d:\Desktop\G-code-generation-tool
+cd d:\Desktop\1
 
-# DXF
-.\convert.bat 01.dxf
-
-# DWF（新增支持！）
-.\convert.bat 02.dwf
+.\convert.bat input\01.dxf      # 自动出 gcode\01.txt + preview\ 两张图
+.\convert.bat input\02.dwf
 ```
 
-**方式 C（直接调用 Python）：**
-```powershell
-python dxf2gcode.py -i 02.dwf -o 02.txt
+成功输出：
 ```
-
-成功输出示例：
-```
-【文件格式】DWF
 【DXF 原始范围】X: 99.954 ~ 147.325  (47.371 mm)
                Y: 38.929 ~ 76.076  (37.148 mm)
 【加工原点位置】br（CNC (0,0) = DXF (147.325, 38.929)）
 【平移后 CNC 范围】X: -47.371 ~ 0.000
                  Y: 0.000 ~ 37.148
 【完成】共处理 23 个图元，跳过边框 1 个
-【输出】G 代码已保存至：02.txt
+【输出】G 代码已保存至：gcode\01.txt
+----------------------------------------
+ Auto-preview: drawing trajectory...
+----------------------------------------
+[Render 1/2] Full path      -> preview\01_full.png
+[Render 2/2] Cutting only   -> preview\01_cutting.png
+
+Done -> gcode\01.txt
+        preview\
 ```
 
-### 4. 预览轨迹（强烈建议每次转换后都做）
+### 4. 单独预览
 
-拖 `.txt`（或 `.nc`）文件到 `preview.bat` 上，或：
+如果你已经有 `.txt`，拖到 `preview.bat` 或：
 ```powershell
-.\preview.bat 02.txt
+.\preview.bat gcode\01.txt
 ```
 
-**自动生成两张图：**
+会在 `preview\` 下生成两张图：
 
 | 文件 | 内容 |
 |------|------|
-| `02_full.png` | **完整轨迹**：蓝色切削 + 灰色快速 G00 + 浅灰抬刀空跑 |
-| `02_cutting.png` | **纯切削轨迹**：只有蓝色雕刻形状，一眼看清最终效果 |
+| `preview\01_full.png` | **完整轨迹**：蓝色切削 + 灰色快速 G00 + 浅灰抬刀空跑 |
+| `preview\01_cutting.png` | **纯切削轨迹**：只有蓝色雕刻形状，一眼看清最终效果 |
 
 ---
 
@@ -163,13 +172,13 @@ M30                  ← 程序结束，回到开头
 
 ```powershell
 # 最简（全部默认参数）
-python dxf2gcode.py -i 02.dwf -o 02.txt
+python core\dxf2gcode.py -i input\考试.dwf -o gcode\考试.txt
 
 # 自定义原点 + 下刀更深 + 更快
-python dxf2gcode.py -i 02.dwf -o 02.txt -p bl -d -0.5 -f 300
+python core\dxf2gcode.py -i input\考试.dwf -o gcode\考试.txt -p bl -d -0.5 -f 300
 
 # 原点在左上 + 安全高 20mm
-python dxf2gcode.py -i 02.dwf -o 02.txt -p tl -s 20
+python core\dxf2gcode.py -i input\考试.dwf -o gcode\考试.txt -p tl -s 20
 ```
 
 ---

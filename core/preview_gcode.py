@@ -432,40 +432,52 @@ def _draw_dashed(draw, points, fill, width=1, dash=6, gap=4):
 
 def main():
     parser = argparse.ArgumentParser(description="G 代码二维预览工具")
-    parser.add_argument("input", help="输入 G 代码文件（.txt / .nc / .tap / .gcode）")
-    parser.add_argument("-o", "--output", help="输出图片路径（默认自动出两张：_full.png 和 _cutting_only.png）")
-    parser.add_argument("--single", action="store_true", help="只出一张图（完整轨迹），默认出两张")
-    parser.add_argument("--no-open", action="store_true", help="生成后不自动打开图片")
+    parser.add_argument("input", help="G-code file (.txt / .nc / .tap / .gcode)")
+    parser.add_argument("-o", "--output", help="Single image output path (overrides all)")
+    parser.add_argument("--img-dir", help="Output directory for both PNG files (e.g. preview/img/)")
+    parser.add_argument("--single", action="store_true", help="Only draw full path (default: 2 images)")
+    parser.add_argument("--no-open", action="store_true", help="Do not auto-open images")
 
     args = parser.parse_args()
 
-    print(f"【读取】{args.input}")
+    print(f"[Read] {args.input}")
     events = parse_gcode_file(args.input)
     if not events:
-        print("【错误】没有解析到任何有效 G 代码")
+        print("[ERROR] No valid G-code parsed")
         return
 
     path = build_toolpath(events)
-    print(f"【解析】{len(path)} 段轨迹")
+    print(f"[Parsed] {len(path)} segments")
 
     # 统计
     kind_count = {"rapid": 0, "line": 0, "cw": 0, "ccw": 0}
     for seg in path:
         kind_count[seg["kind"]] = kind_count.get(seg["kind"], 0) + 1
     cutting_count = sum(1 for s in path if s["is_cutting"])
-    print(f"  G00 快速: {kind_count['rapid']} 段")
-    print(f"  G01 直线: {kind_count['line']} 段")
-    print(f"  G02 顺圆: {kind_count['cw']}   段")
-    print(f"  G03 逆圆: {kind_count['ccw']}   段")
-    print(f"  切削段数: {cutting_count} / {len(path)}")
+    print(f"  G00 rapid : {kind_count['rapid']}")
+    print(f"  G01 line  : {kind_count['line']}")
+    print(f"  G02 cw    : {kind_count['cw']}")
+    print(f"  G03 ccw   : {kind_count['ccw']}")
+    print(f"  Cutting   : {cutting_count} / {len(path)}")
 
-    base = os.path.splitext(args.input)[0]
+    # 确定输出路径的基名：从输入文件名取（不带路径），可选放到 img-dir
+    input_dir, input_name = os.path.split(args.input)
+    input_base, _ = os.path.splitext(input_name)
+
+    if args.img_dir:
+        # 输出到指定目录（自动创建）
+        os.makedirs(args.img_dir, exist_ok=True)
+        base = os.path.join(args.img_dir, input_base)
+    else:
+        # 默认：和输入同目录
+        base = os.path.join(input_dir, input_base)
+
     generated: List[str] = []
 
     if args.single or args.output is not None:
         # 单图模式
         out_path = args.output if args.output else base + "_full.png"
-        print(f"\n【生成】完整轨迹图：{out_path}")
+        print(f"\n[Render] Full path -> {out_path}")
         render_pillow(path, out_path, cutting_only=False)
         generated.append(out_path)
     else:
@@ -473,20 +485,20 @@ def main():
         full_path = base + "_full.png"
         cutting_path = base + "_cutting.png"
 
-        print(f"\n【生成 1/2】完整轨迹（含抬刀空跑）：{full_path}")
+        print(f"\n[Render 1/2] Full path      -> {full_path}")
         render_pillow(path, full_path, cutting_only=False)
         generated.append(full_path)
 
-        print(f"【生成 2/2】仅切削轨迹：{cutting_path}")
+        print(f"[Render 2/2] Cutting only   -> {cutting_path}")
         render_pillow(path, cutting_path, cutting_only=True)
         generated.append(cutting_path)
 
-    # 自动打开
+    # Auto-open in default image viewer
     if not args.no_open:
         for gp in generated:
             abs_path = os.path.abspath(gp)
             webbrowser.open("file:///" + abs_path.replace("\\", "/"))
-        print(f"【打开】已用默认程序打开图片")
+        print(f"[Open] Images opened in default viewer")
 
 
 if __name__ == "__main__":
