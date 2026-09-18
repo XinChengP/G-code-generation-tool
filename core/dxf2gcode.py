@@ -666,11 +666,47 @@ def _emit_line_segment(x_end: float, y_end: float) -> str:
 def _emit_arc(x_start: float, y_start: float,
               x_end: float, y_end: float,
               center_x: float, center_y: float,
-              is_ccw: bool) -> str:
-    """输出一条圆弧插补 G02 或 G03（自动算 I/J，同样不重复写 F）"""
+              is_ccw: bool, use_r: bool = True) -> str:
+    """
+    输出一条圆弧插补 G02 或 G03（不重复写 F）
+
+    规则：首选 R 格式（圆弧半径），只有整圆才用 I/J 格式。
+          原因：整圆的起点和终点重合，R 格式会产生歧义
+          （机床不知道你要顺时针绕一圈还是逆时针绕一圈），
+          必须用 I/J 给出圆心才能唯一确定。
+
+    use_r=True  → 按规则自动选：
+                  非整圆走 R 格式（最保险，不依赖机床 I/J 解释方式）；
+                  整圆自动回退到 I/J 格式。
+    use_r=False → 强制所有弧用 I/J 格式（圆心相对起点的偏移），
+                  只有你确定机床把 I/J 当"相对起点"时才用。
+    """
+    g_code = "G03" if is_ccw else "G02"
+
+    # 整圆检测：起点终点弦长足够小 → 说明这是一条闭弧
+    # 阈值 0.01mm：远小于 CNC 加工精度，不会误判正常弧
+    _CHORD_TOL = 0.01
+    is_full_circle = math.hypot(x_start - x_end, y_start - y_end) < _CHORD_TOL
+
+    if use_r and not is_full_circle:
+        # 非整圆 → R 格式：半径就是圆心到起点的距离
+        radius = math.hypot(x_start - center_x, y_start - center_y)
+        # 算圆心角，判断这段弧有没有超过半圆（180 度）
+        a1 = math.atan2(y_start - center_y, x_start - center_x)
+        a2 = math.atan2(y_end - center_y, x_end - center_x)
+        if is_ccw:
+            sweep = (a2 - a1) % (2.0 * math.pi)
+        else:
+            sweep = (a1 - a2) % (2.0 * math.pi)
+        # G 代码规定：R 为负表示走超过半圆的那一边（优弧）
+        if sweep > math.pi:
+            radius = -radius
+        return f"{g_code} X{_fmt(x_end)} Y{_fmt(y_end)} R{_fmt(radius)}"
+
+    # I/J 格式：圆心相对起点的偏移量
+    # 这里包括两种情况：① 用户强制 --arc-ij；② 自动回退的整圆
     i_val = center_x - x_start
     j_val = center_y - y_start
-    g_code = "G03" if is_ccw else "G02"
     return f"{g_code} X{_fmt(x_end)} Y{_fmt(y_end)} I{_fmt(i_val)} J{_fmt(j_val)}"
 
 
@@ -918,7 +954,7 @@ def _chain_entities(meta_list: List[_EntityMeta],
 # 单个实体 → 切削 G 代码（不含抬刀/下刀）
 # ======================================================================
 
-def _entity_to_cut_lines(meta: _EntityMeta) -> List[str]:
+def _entity_to_cut_lines(meta: _EntityMeta, use_r: bool = True) -> List[str]:
     """
     根据实体元数据生成纯切削 G 代码（无 header/footer）
     如果 meta.needs_reverse=True，则按反向切削（适用于端点反接）
@@ -949,7 +985,7 @@ def _entity_to_cut_lines(meta: _EntityMeta) -> List[str]:
                 lines.append(_emit_arc(p_start[0], p_start[1],
                                        p_end[0], p_end[1],
                                        center[0], center[1],
-                                       is_ccw=True))
+                                       is_ccw=True, use_r=use_r))
             else:
                 # 反向：end_angle → start_angle（顺时针 G02）
                 p_start = _point_on_arc(center, radius, end_angle)
@@ -957,32 +993,22 @@ def _entity_to_cut_lines(meta: _EntityMeta) -> List[str]:
                 lines.append(_emit_arc(p_start[0], p_start[1],
                                        p_end[0], p_end[1],
                                        center[0], center[1],
-                                       is_ccw=False))
+                                       is_ccw=False, use_r=use_r))
 
         elif dxftype == "CIRCLE":
             center = (float(entity.dxf.center.x), float(entity.dxf.center.y))
             radius = float(entity.dxf.radius)
             if radius < 1e-9:
                 return []
-            # 整圆拆两段 G03
+            # 整圆直接输出一条 G02/G03：起点和终点取同一个点（0° 位置）
+            # 因为起点≈终点，_emit_arc 里的整圆检测会自动触发，
+            # 跳过 R 格式改走 I/J 格式——符合"只有整圆才用 I/J"的规则
             p0 = _point_on_arc(center, radius, 0.0)
-            p180 = _point_on_arc(center, radius, 180.0)
-            p360 = _point_on_arc(center, radius, 360.0)
-            if not reversed_:
-                lines.append(_emit_arc(p0[0], p0[1],
-                                       p180[0], p180[1],
-                                       center[0], center[1], is_ccw=True))
-                lines.append(_emit_arc(p180[0], p180[1],
-                                       p360[0], p360[1],
-                                       center[0], center[1], is_ccw=True))
-            else:
-                # 反向整圆：两段 G02
-                lines.append(_emit_arc(p0[0], p0[1],
-                                       p180[0], p180[1],
-                                       center[0], center[1], is_ccw=False))
-                lines.append(_emit_arc(p180[0], p180[1],
-                                       p360[0], p360[1],
-                                       center[0], center[1], is_ccw=False))
+            is_ccw = not reversed_
+            lines.append(_emit_arc(p0[0], p0[1],
+                                   p0[0], p0[1],
+                                   center[0], center[1],
+                                   is_ccw=is_ccw, use_r=use_r))
 
         elif dxftype == "LWPOLYLINE":
             pts = list(entity.get_points())
@@ -1016,7 +1042,7 @@ def _entity_to_cut_lines(meta: _EntityMeta) -> List[str]:
                     lines.append(_emit_line_segment(x2, y2))
                 else:
                     cx, cy, r, is_ccw = arc_params
-                    lines.append(_emit_arc(x1, y1, x2, y2, cx, cy, is_ccw))
+                    lines.append(_emit_arc(x1, y1, x2, y2, cx, cy, is_ccw, use_r=use_r))
 
         elif dxftype == "POLYLINE":
             if hasattr(entity, "vertices"):
@@ -1227,7 +1253,8 @@ def dxf_to_gcode(input_path: str, output_path: str,
                  auto_offset: bool = True, origin: str = "br",
                  snap_tol: float = 0.0, optimize: bool = True,
                  font_path: str = _DEFAULT_FONT,
-                 prog_num: int = 1099) -> None:
+                 prog_num: int = 1099,
+                 arc_r: bool = True) -> None:
     """
     读 CAD 文件 → 转 G 代码 → 写入 .txt
 
@@ -1385,7 +1412,7 @@ def dxf_to_gcode(input_path: str, output_path: str,
 
         # 链内每个实体生成切削代码（连续，不抬刀）
         for meta in metas:
-            cut = _entity_to_cut_lines(meta)
+            cut = _entity_to_cut_lines(meta, use_r=arc_r)
             all_lines.extend(cut)
 
         # 链尾：抬刀。保证任何时候加工完刀都是离开工件的
@@ -1444,6 +1471,10 @@ def main():
                         help="程序号 O 后面的数字，范围 1~9999（默认 1099，即 O1099）。"
                              "批量转换时由 convert_all.bat 自动传入 1、2、3…，"
                              "生成 O0001、O0002、O0003…")
+    parser.add_argument("--arc-ij", action="store_true",
+                        help="圆弧改用 I/J 格式输出（圆心相对起点的偏移）。"
+                             "默认用 R 格式（只写半径），因为有些机床把 I/J "
+                             "解释成圆心的绝对坐标，会让圆弧绕到很远的地方去")
 
     args = parser.parse_args()
 
@@ -1475,6 +1506,7 @@ def main():
         optimize=not args.no_optimize,
         font_path=args.font,
         prog_num=args.prog_num,
+        arc_r=not args.arc_ij,
     )
 
 

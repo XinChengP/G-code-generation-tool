@@ -90,6 +90,7 @@ def parse_gcode_file(filepath: str) -> List[dict]:
             "z": fields.get("Z"),
             "i": fields.get("I"),
             "j": fields.get("J"),
+            "r": fields.get("R"),
         }
         events.append(event)
 
@@ -113,6 +114,10 @@ def build_toolpath(events: List[dict]) -> List[dict]:
         nz = ev["z"] if ev["z"] is not None else cur_z
 
         xy_changed = (nx != cur_x) or (ny != cur_y)
+        # 圆弧模式下起点=终点 → 这是整圆（绕一圈回到原地），
+        # 不能当成"没有移动"跳过，必须强制添加这段轨迹
+        if cur_mode in ("cw", "ccw") and not xy_changed:
+            xy_changed = True
 
         if xy_changed:
             is_cutting = nz < -1e-9
@@ -126,9 +131,16 @@ def build_toolpath(events: List[dict]) -> List[dict]:
             if cur_mode in ("cw", "ccw"):
                 i_val = ev["i"] if ev["i"] is not None else 0.0
                 j_val = ev["j"] if ev["j"] is not None else 0.0
-                cx = cur_x + i_val
-                cy = cur_y + j_val
-                r = math.hypot(i_val, j_val)
+                r_val = ev.get("r")
+                if abs(i_val) < 1e-12 and abs(j_val) < 1e-12 and r_val is not None:
+                    # R 格式圆弧：只给了半径，圆心要反算出来
+                    cx, cy, r = _center_from_r(cur_x, cur_y, nx, ny, r_val,
+                                               is_ccw=(cur_mode == "ccw"))
+                else:
+                    # I/J 格式圆弧：圆心 = 当前点 + 圆心偏移量
+                    cx = cur_x + i_val
+                    cy = cur_y + j_val
+                    r = math.hypot(i_val, j_val)
                 seg["cx"] = cx
                 seg["cy"] = cy
                 seg["r"]  = r
@@ -137,6 +149,41 @@ def build_toolpath(events: List[dict]) -> List[dict]:
         cur_x, cur_y, cur_z = nx, ny, nz
 
     return path
+
+
+def _center_from_r(x1, y1, x2, y2, r_signed, is_ccw: bool):
+    """
+    从圆弧的起点、终点、R 值反算圆心和半径
+    用于解析 R 格式圆弧（G02/G03 X.. Y.. R..）
+
+    G 代码规定：R 为正表示走小于半圆的那一边，R 为负表示走大于半圆的那一边。
+    圆心一定落在起点与终点连线的中垂线上，距离中点 h = √(r² - (弦长/2)²)，
+    至于落在中垂线的哪一侧，由旋转方向和 R 的正负共同决定。
+    """
+    r = abs(r_signed)
+    dx = x2 - x1
+    dy = y2 - y1
+    d = math.hypot(dx, dy)
+    if d < 1e-12:
+        # 起终点重合（整圆），无法反算，退回起点
+        return (x1, y1, r)
+
+    h_sq = r * r - (d / 2.0) ** 2
+    h = math.sqrt(h_sq) if h_sq > 0 else 0.0
+
+    # 起点指向终点的左法线方向
+    nx_ = -dy / d
+    ny_ = dx / d
+
+    # 逆时针 + 短弧 → 圆心在左侧；顺时针 + 短弧 → 右侧；长弧（R 为负）相反
+    if is_ccw:
+        side = 1.0 if r_signed > 0 else -1.0
+    else:
+        side = -1.0 if r_signed > 0 else 1.0
+
+    cx = (x1 + x2) / 2.0 + nx_ * h * side
+    cy = (y1 + y2) / 2.0 + ny_ * h * side
+    return (cx, cy, r)
 
 
 def _arc_points(x1, y1, x2, y2, cx, cy, r, is_ccw: bool, steps: int = 96):
