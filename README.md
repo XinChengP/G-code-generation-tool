@@ -23,14 +23,21 @@ d:\Desktop\1\
 │       └── preview_gcode.py      ← G 代码预览脚本（Pillow 画 PNG）
 │
 ├── 用户入口（拖文件就能跑）───────────
+│   ├── ui.bat                    ← 图形界面（推荐）：文件列表 + 参数 + 内嵌预览
 │   ├── convert.bat               ← 单个文件：拖一个 DXF/DWF/DWFx 进去
 │   ├── convert_all.bat           ← 批量：扫描 input\ 下全部文件
 │   └── preview.bat               ← 单独预览已有 .txt / .nc
 │
+├── ui\app.py                     ← 界面版源码（Tkinter，调用 core\ 模块）
+├── packaging\
+│   ├── build_exe.bat             ← 一键打包独立 exe（PyInstaller）
+│   └── CNCGcodeTool.spec         ← PyInstaller 配置（可复现构建）
+│
 ├── 输入输出目录（自动创建）────────────
 │   ├── input\                    ← 批量模式放 CAD 源文件
 │   ├── gcode\                    ← 转换输出（.txt）
-│   └── preview\                  ← 预览图输出（_full.png + _cutting.png）
+│   ├── preview\                  ← 预览图输出（_full.png + _cutting.png）
+│   └── ui_tmp\                   ← 界面版任务日志 / 预过滤中间产物
 │
 └── README.md
 ```
@@ -69,6 +76,14 @@ d:\Desktop\1\
 ```
 
 ### 3. 转换 + 自动预览（一条龙）
+
+**绿色版 exe（无需装 Python）：** 从 GitHub Releases 下载 `CNCGcodeTool.exe`，
+放到任意文件夹双击即可（数据目录会按 exe 位置自动创建）。
+
+**图形界面：** 双击 `ui.bat` → 添加文件 → 点「开始转换」→ 右侧直接看预览。
+参数（安全高、下刀深、进给、原点、程序号、圆弧格式、字体、预过滤密集线）都在界面上改，
+会自动记住；失败文件不占程序号，成功的编号永远连续。
+技术文档见 `开发文档.md`。
 
 **单个文件：** 把文件拖到 `convert.bat` 上 → 自动转换 + 自动预览
 
@@ -388,6 +403,7 @@ A: 绝大多数 CNC 控制器（FANUC / 广数 / 华中）**不关心后缀名**
 - **ezdwf** 0.0.6+ （DWF / DWFx 解析，可选）
 - **Pillow** （PNG 预览绘图）
 - **matplotlib** （把文字描成矢量轮廓，图纸里有文字才需要，可选）
+- **PyInstaller** 6.x （打包独立 exe，`packaging\build_exe.bat` 才需要）
 - Windows 10 / 11
 
 ---

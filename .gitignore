@@ -10,5 +10,14 @@ __pycache__/
 *.pyc
 *.pyo
 
-# 临时测试脚本
+# 临时测试脚本（_filter_dense.py 例外：它是界面/打包的正式组件）
 _*.py
+!_filter_dense.py
+
+# 界面版（ui\app.py）的运行产物
+ui_tmp/
+ui_settings.json
+
+# PyInstaller 打包产物（发布物是 dist 里的 exe，不进版本库）
+build/
+dist/
